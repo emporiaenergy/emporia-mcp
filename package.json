@@ -22,7 +22,7 @@
   "type": "module",
   "main": "./build/index.js",
   "bin": {
-    "emporia-mcp-server": "build/index.js"
+    "emporia-mcp": "build/index.js"
   },
   "files": [
     "build"
