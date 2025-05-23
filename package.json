@@ -1,0 +1,42 @@
+{
+  "name": "@emporiaenergy/emporia-mcp-server",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./build/index.js",
+  "author": "Emporia Energy (www.emporiaenergy.com)",
+  "description": "An MCP Server to access customer data from the Emporia Energy cloud.",
+  "homepage": "https://www.emporiaenergy.com",
+  "scripts": {
+    "build": "tsc",
+    "format": "prettier --write \"**/*.{ts,json}\" && eslint --max-warnings 0 --fix",
+    "lint": "prettier --check \"**/*.{ts,json}\" && eslint --max-warnings 0",
+    "start": "node build/index.js"
+  },
+  "files": [
+    "build"
+  ],
+  "keywords": [
+    "emporia",
+    "emporia energy",
+    "mcp",
+    "mcp server",
+    "emporia mcp server"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.11.2",
+    "dotenv": "^16.5.0",
+    "node-fetch": "^3.3.2",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "@types/node-fetch": "^2.6.12",
+    "eslint": "^9.27.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.32.1"
+  },
+  "bin": {
+    "emporia-mcp-server": "build/index.js"
+  }
+}
