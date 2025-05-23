@@ -1,24 +1,7 @@
 {
   "name": "@emporiaenergy/emporia-mcp",
   "version": "0.0.1",
-  "type": "module",
-  "main": "./build/index.js",
-  "author": "Emporia Energy (www.emporiaenergy.com)",
   "description": "An MCP Server to access customer data from the Emporia Energy cloud.",
-  "homepage": "https://www.emporiaenergy.com",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/emporiaenergy/emporia-mcp.git"
-  },
-  "scripts": {
-    "build": "tsc",
-    "format": "prettier --write \"**/*.{ts,json}\" && eslint --max-warnings 0 --fix",
-    "lint": "prettier --check \"**/*.{ts,json}\" && eslint --max-warnings 0",
-    "start": "node build/index.js"
-  },
-  "files": [
-    "build"
-  ],
   "keywords": [
     "emporia",
     "emporia energy",
@@ -26,6 +9,30 @@
     "mcp server",
     "emporia mcp server"
   ],
+  "homepage": "https://www.emporiaenergy.com",
+  "bugs": {
+    "url": "https://github.com/emporiaenergy/emporia-mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/emporiaenergy/emporia-mcp.git"
+  },
+  "license": "ISC",
+  "author": "Emporia Energy (www.emporiaenergy.com)",
+  "type": "module",
+  "main": "./build/index.js",
+  "bin": {
+    "emporia-mcp-server": "build/index.js"
+  },
+  "files": [
+    "build"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "format": "prettier --write \"**/*.{ts,json}\" && eslint --max-warnings 0 --fix",
+    "lint": "prettier --check \"**/*.{ts,json}\" && eslint --max-warnings 0",
+    "start": "node build/index.js"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.11.2",
     "dotenv": "^16.5.0",
@@ -39,8 +46,5 @@
     "prettier": "^3.5.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.32.1"
-  },
-  "bin": {
-    "emporia-mcp-server": "build/index.js"
   }
 }
