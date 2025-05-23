@@ -106,7 +106,8 @@ EMPORIA_PASSWORD=examplepassword1234
 ```
 
 #### Option 3: Using Node on Windows
-There is an [NPX bug on Windows](https://www.reddit.com/r/ClaudeAI/comments/1h3ke5r/help_needed_mcp_not_working_with_claude_on/), so use Node instead
+There is an [NPX bug on Windows](https://www.reddit.com/r/ClaudeAI/comments/1h3ke5r/help_needed_mcp_not_working_with_claude_on/), so use Node instead.  
+
 ```json
 {
   "mcpServers": {
@@ -120,7 +121,8 @@ There is an [NPX bug on Windows](https://www.reddit.com/r/ClaudeAI/comments/1h3k
       }
     }
   }
-}```
+}
+```
 
 # Feature Status
 
