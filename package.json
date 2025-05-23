@@ -1,11 +1,15 @@
 {
-  "name": "@emporiaenergy/emporia-mcp-server",
+  "name": "@emporiaenergy/emporia-mcp",
   "version": "0.0.1",
   "type": "module",
   "main": "./build/index.js",
   "author": "Emporia Energy (www.emporiaenergy.com)",
   "description": "An MCP Server to access customer data from the Emporia Energy cloud.",
   "homepage": "https://www.emporiaenergy.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/emporiaenergy/emporia-mcp.git"
+  },
   "scripts": {
     "build": "tsc",
     "format": "prettier --write \"**/*.{ts,json}\" && eslint --max-warnings 0 --fix",

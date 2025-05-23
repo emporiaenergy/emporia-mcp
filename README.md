@@ -52,7 +52,7 @@ to leave the server running. See Option 3 below for Windows installation.
 ```bash
 # Clone the repository
 git clone git@github.com:emporiaenergy/emporia-mcp.git
-cd emporia-mcp-server
+cd emporia-mcp
 
 # Install dependencies and build project
 npm install && npm run build
