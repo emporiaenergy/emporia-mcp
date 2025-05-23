@@ -1,6 +1,6 @@
 {
   "name": "@emporiaenergy/emporia-mcp",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "An MCP Server to access customer data from the Emporia Energy cloud.",
   "keywords": [
     "emporia",
