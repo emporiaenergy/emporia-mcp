@@ -51,7 +51,7 @@ to leave the server running. See Option 3 below for Windows installation.
 
 ```bash
 # Clone the repository
-git clone git@github.com:emporiaenergy/emporia-mcp.git
+git clone https://github.com/emporiaenergy/emporia-mcp.git
 cd emporia-mcp
 
 # Install dependencies and build project
@@ -130,11 +130,11 @@ There is an [NPX bug on Windows](https://www.reddit.com/r/ClaudeAI/comments/1h3k
 |:---------|:--------|:------:|
 | **Authentication** | Account/Password (as env vars) | ✅ Available |
 |  | Account/Password (as .ENV File) | ✅ Available |
-|  | OAuth | 🔄 Planned |
-|  | Third-party Auth Providers | 🔄 Planned |
+|  | OAuth | 🔄 TBD |
+|  | Third-party Auth Providers | 🔄 TBD |
 | **Account Information** | List Devices | ✅ Available |
-|  | Rate Plan Information | 🔄 Planned |
-|  | Recommendations | 🔄 Planned |
+|  | Rate Plan Information | 🔄 TBD |
+|  | Recommendations | 🔄 TBD |
 | **Device Details** | Energy Monitors (w/ channels) | ✅ Available |
 |  | EV Chargers | ✅ Available |
 |  | Smart Plugs | ✅ Available |
@@ -146,18 +146,18 @@ There is an [NPX bug on Windows](https://www.reddit.com/r/ClaudeAI/comments/1h3k
 |  | Smart Plugs | ✅ Available |
 |  | Home Batteries (inc. SoC) | ✅ Available |
 | **Update Settings/Control** | Energy Monitors | ❌ Not Available |
-|  | EV Chargers | 🔄 Planned |
-|  | Smart Plugs | 🔄 Planned |
-|  | Home Batteries | 🔄 Planned |
+|  | EV Chargers | 🔄 TBD |
+|  | Smart Plugs | 🔄 TBD |
+|  | Home Batteries | 🔄 TBD |
 |  | Appliances | ❌ Not Available |
 |  | Thermostats | ❌ Not Available |
 | **Additional Features** | EV Charging Report | ✅ Available |
 |  | EV Charger Sessions | ✅ Available |
 | **MCP Implementation** | via NPM | ✅ Available |
-|  | via Docker | 🔄 Planned |
+|  | via Docker | 🔄 TBD |
 |  | Python (UV) | ❌ Not Available |
-|  | Tool Configuration (enable/disable) | 🔄 Planned |
-|  | Remote SSE | 🔄 Planned |
+|  | Tool Configuration (enable/disable) | 🔄 TBD |
+|  | Remote SSE | 🔄 TBD |
 
 ## Available Tools
 
