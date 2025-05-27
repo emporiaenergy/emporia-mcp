@@ -4,7 +4,7 @@ The Emporia Energy MCP Server provides a secure way for LLM applications to acce
 
 This MCP Server is implemented as a local stdio (transport) server requiring it to be executed locally similar to a command line program. We are currently investigating options for providing a remote SSE MCP server (hosted by Emporia Energy) that would allow for OAuth authentication flows however we don't have an anticipated timeline of when this might be available. 
 
-This MCP server targets the Emporia Energy customer cloud - does not support Partner related behavior.
+This MCP server targets the Emporia Energy customer cloud - it does not support Partner related behavior.
 
 Emporia Energy wants to hear any feedback or suggestions you might have related to this tool (or anything else we're working on). Feel free to reach out with any questions/thoughts by emailing info@emporiaenergy.com.
 
@@ -23,20 +23,22 @@ See Feature Status below for additional details on device specific implementatio
 ### ⚠️ Important Notes
 - For the BETA implementation of this MCP server, you must have a native-Emporia Energy account. It will not work if you've created an Emporia Account using Google or Apple as third-party authentication providers. In the short-term, you can create a new account (with an email/password) and [_share_](https://help.emporiaenergy.com/en/articles/9084330-sharing-devices-across-multiple-emporia-accounts) your Emporia devices to the new account via the Emporia Energy [web](https://web.emporiaenergy.com/) or [mobile app](https://www.emporiaenergy.com/app/). We expect that a future version of this MCP server program will have additional flexibility for these third-party provider accounts.
 - Emporia accounts with many devices associated (> 20) may have issues with short context windows and long API responses. Similarly, requesting high amounts of measurement data can produce excessively large API responses that can cause problems for some clients and context-limited LLMs.
-- LLM's can be unreliable. While this MCP server program will provide accurate Emporia data from the cloud, the LLM interpretation (and requesting) of that data may be incorrect at times.
+- LLM's can be unreliable. While this MCP server program will provide accurate Emporia data from the cloud, the LLM's interpretation (and requesting) of that data may be incorrect at times.
 
 ## Examples
 
 TODO
 
 ### Tips/Tricks
-- Be detailed when requesting specific dates/times of measurement data. Some clients/LLM's may not provide up-to-date timestamps as part of their prompting process, so specifying exact time frames for more accurate data is usually helpful.  
+- Be detailed when requesting specific dates/times of measurement data. Some clients/LLM's may not provide up-to-date timestamps as part of their prompting process, so specifying exact time frames is usually helpful.  
       + Instead of "show me last weeks usage", try "show me usage from May 01, 2025 through May 10, 2025"
 - Clarify if you're looking for Power or Energy measurement/usage data as they have separate endpoints/tools (and would be used for separate purposes depending on your goals).  
       + Instead of "show me usage", try "show me energy usage for..." or "show me power measurements for..."
 
-## Prerequisites
+## Release Notes
+- May 23, 2025 - Initial release
 
+## Prerequisites
 - Node.js 18+ (a Docker-based installation option may be available in the future)
 - An Emporia Energy account (_native_ account, not Google/Apple created)
 - An MCP-capable AI client program (Claude Desktop, Cursor/Windsurf/VS Code, LM Studio/OpenWebUI, etc...)  
@@ -44,10 +46,8 @@ TODO
 
 ## Usage
 
-## Generating the MCP server file locally
-
-You have to create a JavaScript server file locally.  Your MCP client will run this file, you don't need
-to leave the server running. See Option 3 below for Windows installation.
+### Generating the MCP server file locally
+You have to create a JavaScript server file locally.  Your MCP client will run this file, you don't need to leave the server running. See Option 3 below for Windows installation.
 
 ```bash
 # Clone the repository
