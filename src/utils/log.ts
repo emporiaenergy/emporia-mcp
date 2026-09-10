@@ -146,7 +146,7 @@ export function log(message: string, data: any = null, level: "debug" | "info" |
     if (process.env.DEBUG || level === "error") {
       console.error(formattedLog);
     }
-  } else {  
+  } else {
     // Remote server logs go to the console
     if ((process.env.DEBUG && level === "debug") || level === "info") {
       console.info(formattedLog);

@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 import { defineConfig, globalIgnores } from "eslint/config";
 
 export default defineConfig([
-  globalIgnores(["*.config.mjs"]),
+  globalIgnores(["*.config.mjs", "build/", "node_modules/"]),
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {

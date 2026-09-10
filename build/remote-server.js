@@ -4,7 +4,7 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import express from "express";
-import cors from 'cors';
+import cors from "cors";
 import { EmporiaApiService } from "./services/api.js";
 import { log } from "./utils/log.js";
 import { registerEmporiaTools } from "./tools/emporia.js";
@@ -22,7 +22,7 @@ async function main() {
      */
     const server = new McpServer({
         name: "emporia-mcp",
-        version: "1.0.0",
+        version: "0.2.0",
         capabilities: {
             resources: {},
             tools: {},
@@ -31,13 +31,13 @@ async function main() {
     // Register all Emporia tools with the server
     registerEmporiaTools(server, apiService);
     // Add global error handler
-    process.on("unhandledRejection", (reason, promise) => {
+    process.on("unhandledRejection", (reason) => {
         log("Unhandled Rejection", { reason: String(reason) }, "error");
     });
     // Map of MCP session IDs to transports
     const transports = {
         streamable: {},
-        sse: {}
+        sse: {},
     };
     /**
      * Emporia Remote MCP Express Server
@@ -60,7 +60,9 @@ async function main() {
                 // Create the StreamableHttp transport
                 transport = new StreamableHTTPServerTransport({
                     sessionIdGenerator: () => randomUUID(),
-                    onsessioninitialized: (sessionId) => { transports.streamable[sessionId] = transport; }
+                    onsessioninitialized: (sessionId) => {
+                        transports.streamable[sessionId] = transport;
+                    },
                 });
                 transport.onclose = () => {
                     if (transport.sessionId) {
@@ -95,7 +97,7 @@ async function main() {
             req.auth = {
                 token: authorization,
                 clientId: "",
-                scopes: []
+                scopes: [],
             };
             await transport.handleRequest(req, res, req.body);
         }
@@ -153,7 +155,7 @@ async function main() {
             req.auth = {
                 token: authorization,
                 clientId: "",
-                scopes: []
+                scopes: [],
             };
             await transport.handlePostMessage(req, res);
         }
@@ -169,7 +171,7 @@ async function main() {
         const metadata = {
             resource: MCP_URL + "/streamable",
             authorization_servers: [MCP_URL],
-            bearer_methods_supported: ["header"]
+            bearer_methods_supported: ["header"],
         };
         res.json(metadata);
     });
@@ -182,7 +184,7 @@ async function main() {
         const metadata = {
             resource: MCP_URL + "/" + transport,
             authorization_servers: [MCP_URL],
-            bearer_methods_supported: ["header"]
+            bearer_methods_supported: ["header"],
         };
         res.json(metadata);
     });
@@ -196,14 +198,14 @@ async function main() {
             response_types_supported: ["code"],
             grant_types_supported: ["authorization_code"],
             code_challenge_methods_supported: ["S256"],
-            token_endpoint_auth_methods_supported: ["none"]
+            token_endpoint_auth_methods_supported: ["none"],
         };
         res.status(200).json(oauthMetadata);
     });
     app.post("/oauth/register", express.json(), (req, res) => {
         res.json({
             client_id: COGNITO_CLIENT_ID,
-            redirect_uris: req.body.redirect_uris
+            redirect_uris: req.body.redirect_uris,
         });
     });
     app.get("/oauth/authorize", (req, res) => {
@@ -218,7 +220,7 @@ async function main() {
             redirect_uri,
             client_id,
             code_challenge,
-            code_challenge_method
+            code_challenge_method,
         });
         // Build params for Cognito with our callback URI
         const cognitoParams = new URLSearchParams({
@@ -227,7 +229,7 @@ async function main() {
             redirect_uri: `${MCP_URL}/oauth/callback`,
             state: internalState,
             ...(code_challenge && { code_challenge }),
-            ...(code_challenge_method && { code_challenge_method })
+            ...(code_challenge_method && { code_challenge_method }),
         });
         res.redirect(`${AUTH_URL}/oauth2/authorize?${cognitoParams.toString()}`);
     });
@@ -239,8 +241,8 @@ async function main() {
         const session = sessionId ? pendingOAuthRequests.get(sessionId) : null;
         if (!session) {
             return res.status(400).json({
-                error: 'invalid_request',
-                error_description: 'Invalid or expired session'
+                error: "invalid_request",
+                error_description: "Invalid or expired session",
             });
         }
         // Clean up the session
@@ -249,7 +251,7 @@ async function main() {
         if (error) {
             const errorParams = new URLSearchParams({
                 error,
-                ...(error_description && { error_description })
+                ...(error_description && { error_description }),
             });
             return res.redirect(`${session.redirect_uri}?${errorParams.toString()}`);
         }
@@ -260,8 +262,8 @@ async function main() {
         }
         // Something went wrong
         res.status(400).json({
-            error: 'invalid_request',
-            error_description: 'No authorization code received'
+            error: "invalid_request",
+            error_description: "No authorization code received",
         });
     });
     app.post("/oauth/token", express.urlencoded({ extended: true }), async (req, res) => {

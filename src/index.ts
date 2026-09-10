@@ -48,7 +48,7 @@ async function main(): Promise<void> {
    */
   const server = new McpServer({
     name: "emporia-mcp",
-    version: "1.0.0",
+    version: "0.2.0",
     capabilities: {
       resources: {},
       tools: {},
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
 
   // Add global error handler
-  process.on("unhandledRejection", (reason, promise) => {
+  process.on("unhandledRejection", (reason) => {
     log("Unhandled Rejection", { reason: String(reason) }, "error", "SERVER");
   });
 

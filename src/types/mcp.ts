@@ -8,5 +8,5 @@ export {
   GetEVChargingReportParams,
   GetEVChargerSessionsParams,
   GetDevicePowerUsageParams,
-  GetDeviceEnergyUsageParams
+  GetDeviceEnergyUsageParams,
 } from "./api.js";

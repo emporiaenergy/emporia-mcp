@@ -17,6 +17,28 @@ function getDeviceTypeFromId(id) {
     }
     return null;
 }
+/**
+ * Split device ids by whether the per-type detail/usage tools can route them to
+ * an endpoint. Routing is decided solely by the serial-to-type inference these
+ * tools already rely on (getDeviceTypeFromId) — ids it can't classify (e.g. the
+ * third-party "THERMOSTAT_20072" form) are separated out so callers can process
+ * the rest instead of failing the whole batch. This is not extra validation:
+ * ids that classify are still sent to the cloud, which remains the authority on
+ * whether they're actually valid.
+ */
+export function partitionSupportedDeviceIds(ids) {
+    const supported = [];
+    const unsupported = [];
+    for (const id of ids) {
+        if (getDeviceTypeFromId(id)) {
+            supported.push(id);
+        }
+        else {
+            unsupported.push(id);
+        }
+    }
+    return { supported, unsupported };
+}
 function groupDeviceIdsByType(manufacturerIds) {
     const deviceGroups = {};
     for (const id of manufacturerIds) {
@@ -42,39 +64,87 @@ export class EmporiaApiService {
     }
     /**
      * List all devices for the current user.
+     *
+     * Uses the modern, site-aware cloud endpoint GET /v1/customers/devices. This
+     * replaces the legacy GET /customers/devices, which predates the "sites"
+     * concept and does not return devices that belong to a site (yielding an
+     * empty list for customers whose devices are all site-assigned). Customer
+     * info is fetched separately from GET /v1/customers, since the modern devices
+     * response no longer includes it.
+     *
+     * @param siteGid Optional site filter; when provided, only devices belonging to that site are returned.
      */
-    async listDevices(authToken) {
+    async listDevices(authToken, siteGid) {
         try {
-            const data = await this.get("/customers/devices", authToken, true);
-            // Format the response to include more context
+            const parameters = siteGid !== undefined ? { site_gid: String(siteGid) } : undefined;
+            // Fetch devices (site-aware) and customer info in parallel. Customer info
+            // is best-effort: a failure there should not prevent returning devices.
+            const [devicesData, customer] = await Promise.all([
+                this.get("/v1/customers/devices", authToken, false, { parameters }),
+                this.get("/v1/customers", authToken, false).catch((error) => {
+                    log("Error fetching customer info (continuing without it)", { error: String(error) }, "info", "API");
+                    return null;
+                }),
+            ]);
+            const devices = devicesData.devices ?? [];
+            const name = customer && customer.first_name && customer.last_name ? `${customer.first_name} ${customer.last_name}` : null;
             return {
                 customerInfo: {
-                    customerGid: data.customerGid,
-                    email: data.email,
-                    name: data.firstName && data.lastName ? `${data.firstName} ${data.lastName}` : null,
-                    createdAt: data.createdAt,
+                    customerGid: customer?.customer_gid ?? null,
+                    email: customer?.email ?? null,
+                    name,
+                    createdAt: customer?.created_at ?? null,
                 },
-                deviceCount: data.devices.length,
-                devices: data.devices.map((device) => ({
-                    id: device.deviceGid,
-                    manufacturerDeviceId: device.manufacturerDeviceId,
-                    model: device.model,
-                    firmwareVersion: device.firmware,
-                    name: device.locationProperties.displayName,
-                    connected: device.deviceConnected.connected,
-                    offlineSince: device.deviceConnected.offlineSince,
-                    type: device.evCharger ? "EV Charger" : device.outlet ? "Smart Plug" : device.battery ? "Battery" : "Vue Monitor",
-                    locationProperties: device.locationProperties,
-                    deviceDetails: {
-                        evCharger: device.evCharger,
-                        smartPlug: device.outlet,
-                        battery: device.battery,
-                    },
-                })),
+                deviceCount: devices.length,
+                devices,
             };
         }
         catch (error) {
             log("Error fetching devices", { error: String(error) }, "error", "API");
+            throw error;
+        }
+    }
+    /**
+     * List all sites associated with the current user.
+     *
+     * A site bundles devices (0, one, or many) into a single grouping, and a
+     * customer may have multiple sites. Backed by GET /v1/customers/sites.
+     */
+    async listSites(authToken) {
+        try {
+            const data = await this.get("/v1/customers/sites", authToken, false);
+            return { sites: data.sites ?? [] };
+        }
+        catch (error) {
+            log("Error fetching sites", { error: String(error) }, "error", "API");
+            throw error;
+        }
+    }
+    /**
+     * Get live status for the current user's devices, backed by
+     * GET /v1/customers/devices/status.
+     *
+     * With no filters, only Emporia device statuses are returned. Third-party
+     * device statuses (thermostats, appliances, vehicles) are fetched on demand
+     * from the vendor and are only included when explicitly requested via
+     * device_ids. A site_gid filter is ignored when device_ids is provided.
+     */
+    async getDeviceStatus(authToken, params) {
+        try {
+            const parameters = {};
+            if (params.device_ids && params.device_ids.length > 0) {
+                parameters.device_ids = params.device_ids.join(",");
+            }
+            if (params.site_gid !== undefined) {
+                parameters.site_gid = String(params.site_gid);
+            }
+            const hasParams = Object.keys(parameters).length > 0;
+            return await this.get("/v1/customers/devices/status", authToken, false, {
+                parameters: hasParams ? parameters : undefined,
+            });
+        }
+        catch (error) {
+            log("Error fetching device status", { error: String(error), params }, "error", "API");
             throw error;
         }
     }
@@ -170,6 +240,9 @@ export class EmporiaApiService {
                         channelId: c.channel_id,
                         channelNum: c.channel_num,
                         type: c.sub_type || "unknown",
+                        // The combined "Mains" channel aggregates Mains_A/B/C and is NOT accepted as a
+                        // circuit_id by the energy/power usage tools; the split legs and branches are.
+                        usableAsCircuitId: c.channel_id !== "Mains",
                     })),
                 };
             });
@@ -400,8 +473,9 @@ export class EmporiaApiService {
         let apiOrigin;
         // Get auth token from Cognito when running the MCP server locally
         if (authToken === undefined) {
-            if (this.authService === null)
+            if (this.authService === null) {
                 throw Error("Missing authorization token");
+            }
             const { idToken } = await this.authService.getToken();
             authToken = idToken;
         }
@@ -440,6 +514,15 @@ export class EmporiaApiService {
             throw error;
         }
         const text = await response.text();
+        // Surface non-success HTTP statuses as errors. Without this, an error body
+        // (e.g. 401/403/429/5xx) would be JSON-parsed and returned as if it were a
+        // successful payload — which, for list endpoints, silently degrades into an
+        // empty list rather than a clear failure.
+        if (!response.ok) {
+            const snippet = text.length > 500 ? `${text.slice(0, 500)}…` : text;
+            log("Request failed with non-success status", { url, status: response.status, statusText: response.statusText, body: text }, "error", "API");
+            throw new Error(`Emporia API request failed (${response.status} ${response.statusText})${snippet ? `: ${snippet}` : ""}`);
+        }
         let json;
         try {
             json = JSON.parse(text);

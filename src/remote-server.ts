@@ -5,25 +5,27 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import express, { Application, Request, Response } from "express";
-import cors from 'cors';
+import cors from "cors";
 import { EmporiaApiService } from "./services/api.js";
 import { log } from "./utils/log.js";
 import { registerEmporiaTools } from "./tools/emporia.js";
 import { randomUUID } from "crypto";
 
 async function main(): Promise<Application> {
-
   const AUTH_URL = process.env.EMPORIA_AUTH_ORIGIN || "https://auth.emporiaenergy.com";
   const MCP_URL = process.env.EMPORIA_MCP_ORIGIN || "https://mcp.emporiaenergy.com";
-  const COGNITO_CLIENT_ID = process.env.COGNITO_CLIENT_ID ||  "4qte47jbstod8apnfic0bunmrq";
+  const COGNITO_CLIENT_ID = process.env.COGNITO_CLIENT_ID || "4qte47jbstod8apnfic0bunmrq";
 
   // Store pending OAuth requests
-  const pendingOAuthRequests = new Map<string, {
-    redirect_uri: string;
-    client_id: string;
-    code_challenge?: string;
-    code_challenge_method?: string;
-  }>();
+  const pendingOAuthRequests = new Map<
+    string,
+    {
+      redirect_uri: string;
+      client_id: string;
+      code_challenge?: string;
+      code_challenge_method?: string;
+    }
+  >();
 
   const apiService = new EmporiaApiService(null);
 
@@ -33,7 +35,7 @@ async function main(): Promise<Application> {
    */
   const server = new McpServer({
     name: "emporia-mcp",
-    version: "1.0.0",
+    version: "0.2.0",
     capabilities: {
       resources: {},
       tools: {},
@@ -44,14 +46,14 @@ async function main(): Promise<Application> {
   registerEmporiaTools(server, apiService);
 
   // Add global error handler
-  process.on("unhandledRejection", (reason, promise) => {
+  process.on("unhandledRejection", (reason) => {
     log("Unhandled Rejection", { reason: String(reason) }, "error");
   });
 
   // Map of MCP session IDs to transports
   const transports = {
     streamable: {} as Record<string, StreamableHTTPServerTransport>,
-    sse: {} as Record<string, SSEServerTransport>
+    sse: {} as Record<string, SSEServerTransport>,
   };
 
   /**
@@ -75,13 +77,15 @@ async function main(): Promise<Application> {
         transport = transports.streamable[sessionId];
       } else if (!sessionId && isInitializeRequest(req.body)) {
         // Create the StreamableHttp transport
-        transport = new StreamableHTTPServerTransport({ 
-          sessionIdGenerator: () => randomUUID(), 
-          onsessioninitialized: (sessionId) => { transports.streamable[sessionId] = transport; }
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (sessionId) => {
+            transports.streamable[sessionId] = transport;
+          },
         });
 
         transport.onclose = () => {
-          if( transport.sessionId ) {
+          if (transport.sessionId) {
             delete transports.streamable[transport.sessionId];
           }
         };
@@ -99,8 +103,8 @@ async function main(): Promise<Application> {
         });
       }
 
-      const authorization = req.headers["authorization"] as string
-      if( !authorization || !authorization.startsWith("Bearer ") ) {
+      const authorization = req.headers["authorization"] as string;
+      if (!authorization || !authorization.startsWith("Bearer ")) {
         return res.status(401).json({
           jsonrpc: "2.0",
           error: {
@@ -115,7 +119,7 @@ async function main(): Promise<Application> {
       (req as any).auth = {
         token: authorization,
         clientId: "",
-        scopes: []
+        scopes: [],
       };
 
       await transport.handleRequest(req, res, req.body);
@@ -133,7 +137,7 @@ async function main(): Promise<Application> {
       // Create SSE transport for legacy clients
       const transport = new SSEServerTransport("/messages", res);
       transports.sse[transport.sessionId] = transport;
-      
+
       // Handle client disconnect
       req.on("close", () => {
         delete transports.sse[transport.sessionId];
@@ -164,8 +168,8 @@ async function main(): Promise<Application> {
         return;
       }
 
-      const authorization = req.headers["authorization"] as string
-      if( !authorization || !authorization.startsWith("Bearer ") ) {
+      const authorization = req.headers["authorization"] as string;
+      if (!authorization || !authorization.startsWith("Bearer ")) {
         return res.status(401).json({
           jsonrpc: "2.0",
           error: {
@@ -180,7 +184,7 @@ async function main(): Promise<Application> {
       (req as any).auth = {
         token: authorization,
         clientId: "",
-        scopes: []
+        scopes: [],
       };
 
       await transport.handlePostMessage(req, res);
@@ -197,7 +201,7 @@ async function main(): Promise<Application> {
     const metadata = {
       resource: MCP_URL + "/streamable",
       authorization_servers: [MCP_URL],
-      bearer_methods_supported: ["header"]
+      bearer_methods_supported: ["header"],
     };
     res.json(metadata);
   });
@@ -208,11 +212,11 @@ async function main(): Promise<Application> {
     if (!transport || (transport !== "sse" && transport !== "streamable")) {
       return res.status(404);
     }
-    
+
     const metadata = {
       resource: MCP_URL + "/" + transport,
       authorization_servers: [MCP_URL],
-      bearer_methods_supported: ["header"]
+      bearer_methods_supported: ["header"],
     };
     res.json(metadata);
   });
@@ -227,7 +231,7 @@ async function main(): Promise<Application> {
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code"],
       code_challenge_methods_supported: ["S256"],
-      token_endpoint_auth_methods_supported: ["none"]
+      token_endpoint_auth_methods_supported: ["none"],
     };
     res.status(200).json(oauthMetadata);
   });
@@ -235,28 +239,28 @@ async function main(): Promise<Application> {
   app.post("/oauth/register", express.json(), (req: Request, res: Response) => {
     res.json({
       client_id: COGNITO_CLIENT_ID,
-      redirect_uris: req.body.redirect_uris
+      redirect_uris: req.body.redirect_uris,
     });
   });
 
   app.get("/oauth/authorize", (req: Request, res: Response) => {
     const { redirect_uri, client_id, code_challenge, code_challenge_method } = req.query as Record<string, string>;
-    
+
     if (!redirect_uri || !client_id) {
       return res.status(400).json({ error: "Missing required parameters: redirect_uri and client_id" });
     }
-    
+
     // Generate a unique state to track this request
     const internalState = randomUUID();
-    
+
     // Store the original request parameters
     pendingOAuthRequests.set(internalState, {
       redirect_uri,
       client_id,
       code_challenge,
-      code_challenge_method
+      code_challenge_method,
     });
-    
+
     // Build params for Cognito with our callback URI
     const cognitoParams = new URLSearchParams({
       response_type: "code",
@@ -264,24 +268,24 @@ async function main(): Promise<Application> {
       redirect_uri: `${MCP_URL}/oauth/callback`,
       state: internalState,
       ...(code_challenge && { code_challenge }),
-      ...(code_challenge_method && { code_challenge_method })
+      ...(code_challenge_method && { code_challenge_method }),
     });
-    
+
     res.redirect(`${AUTH_URL}/oauth2/authorize?${cognitoParams.toString()}`);
   });
 
   // New callback endpoint to handle Cognito's response
   app.get("/oauth/callback", (req: Request, res: Response) => {
     const { code, state, error, error_description } = req.query as Record<string, string>;
-    
+
     // Retrieve the original OAuth session
     const sessionId = state;
     const session = sessionId ? pendingOAuthRequests.get(sessionId) : null;
-    
+
     if (!session) {
-      return res.status(400).json({ 
-        error: 'invalid_request', 
-        error_description: 'Invalid or expired session' 
+      return res.status(400).json({
+        error: "invalid_request",
+        error_description: "Invalid or expired session",
       });
     }
 
@@ -292,7 +296,7 @@ async function main(): Promise<Application> {
     if (error) {
       const errorParams = new URLSearchParams({
         error,
-        ...(error_description && { error_description })
+        ...(error_description && { error_description }),
       });
       return res.redirect(`${session.redirect_uri}?${errorParams.toString()}`);
     }
@@ -304,9 +308,9 @@ async function main(): Promise<Application> {
     }
 
     // Something went wrong
-    res.status(400).json({ 
-      error: 'invalid_request', 
-      error_description: 'No authorization code received' 
+    res.status(400).json({
+      error: "invalid_request",
+      error_description: "No authorization code received",
     });
   });
 
@@ -314,7 +318,7 @@ async function main(): Promise<Application> {
     const body = { ...req.body };
     body.redirect_uri = `${MCP_URL}/oauth/callback`;
     const params = new URLSearchParams(body);
-    
+
     try {
       // Request token from Cognito
       const response = await fetch(`${AUTH_URL}/oauth2/token`, {
@@ -324,7 +328,7 @@ async function main(): Promise<Application> {
         },
         body: params,
       });
-      
+
       const data = await response.text();
       res.status(response.status).send(data);
     } catch (error) {

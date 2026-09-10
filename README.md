@@ -13,7 +13,8 @@ To learn more about Emporia Energy and what we're building - feel free to visit 
 ## Features
 
 - Secure authentication with automatic token refresh
-- Device listing with comprehensive device information
+- Device listing with comprehensive device information, including which site (**Home**) each device belongs to
+- Site listing, with the ability to filter devices by site — a "site" is what the Emporia app calls a **Home**
 - Energy and Power measurement/usage data retrieval with configurable time scales and energy units
 - Well-structured API responses with contextual information
 - Additional EV Charger-related tools for session/report details
@@ -38,6 +39,7 @@ TODO
 ## Release Notes
 - May 23, 2025 - Initial release
 - August 26, 2025 - Remote MCP released (SSE & Streamable HTTP)
+- September 10, 2026 - `listDevices` now uses the site-aware cloud endpoint (devices assigned to a site/Home are no longer missing) and accepts an optional `site_gid` filter; added the `listSites` (Homes) and `getDeviceStatus` tools. Note: "site" (as used by the API and these tools) is the same feature the Emporia app calls a "Home". Also hardened the device tools: `getDeviceDetails`/usage tools now skip and report third-party (thermostat/appliance/vehicle) ids instead of failing the whole batch, `circuit_ids` is optional for non-Vue devices, `getDevicesChannels` flags each channel's `usableAsCircuitId`, `getDeviceStatus` summaries count all device categories, and `listSites` returns member counts by default (pass `include_members` for emails).
 
 ## Prerequisites
 - Node.js 18+ (a Docker-based installation option may be available in the future)
@@ -140,7 +142,9 @@ an authentication token retrieved from the OAuth flow in your requests.
 |  | Account/Password (as .ENV File)     | ✅ Available (Local only) |
 |  | OAuth                               | ✅ Available (Remote only) |
 |  | Third-party Auth Providers          | 🔄 TBD |
-| **Account Information** | List Devices                        | ✅ Available |
+| **Account Information** | List Devices (site-aware)           | ✅ Available |
+|  | List Sites / Homes                  | ✅ Available |
+|  | Device Status (connectivity/live)   | ✅ Available |
 |  | Rate Plan Information               | 🔄 TBD |
 |  | Recommendations                     | 🔄 TBD |
 | **Device Details** | Energy Monitors (w/ channels)       | ✅ Available |
@@ -174,48 +178,76 @@ The server provides the following tools to help AI assistants interact with your
 
 1. **listDevices**  
    *Get an overview of all your connected Emporia Energy devices*  
-   This tool provides a comprehensive inventory of your devices including customer information, device details (models, firmware versions), connection status, and location data. Use this to discover what devices are available for monitoring or control.  
+   This tool provides a comprehensive inventory of your devices including customer information, device details (models, firmware versions), site (**Home**) assignment, and location data. It covers every device type on your account — energy monitors, EV chargers, smart plugs, batteries, and third-party thermostats, appliances, and vehicles. Devices are returned whether or not they belong to a site/Home. Use this to discover what devices are available for monitoring or control.  
    
-   *Example response:* Lists all your Vue energy monitors, EV chargers, and other Emporia devices with their current status and configuration details.
+   *Optional parameter:* `site_gid` — pass a site (Home) identifier (see **listSites**) to return only the devices belonging to that site/Home.  
+   
+   *Example response:* Lists all your Vue energy monitors, EV chargers, and other Emporia devices with their type, configuration details, and the `site_gid` of the site (Home) each belongs to (if any).
 
-2. **getDeviceDetails**  
-   *Get real-time status and details for any device type*  
-   This tool returns detailed information about any of your Emporia devices (EV chargers, energy monitors, smart plugs, batteries, etc.) by passing one or more device serial numbers. The response includes relevant details for each device type, such as connection status, current state, charging rates, firmware, and more.
+2. **listSites**  
+   *See how your devices are grouped into sites (Homes)*  
+   A **site** — the feature the Emporia app calls a **Home** — bundles devices (zero, one, or many) under a single location, and an account can have multiple sites/Homes, each of which may also be shared with other Emporia users. (The API and this tool use the term "site" and the identifier `site_gid`; "Home" is the customer-facing name for the same thing.) This tool lists your sites/Homes with their names, associated devices, member count, and location/utility settings. The `device_ids` on each site match the `device_id` values returned by **listDevices**, and you can pass a site's `site_gid` to **listDevices** to drill into just that site's devices.  
+   
+   *Optional parameter:* `include_members` — a shared site/Home can be shared with many other customers, so by default only the member *count* is returned. Pass `include_members: true` to also return the members' email addresses (only when the user specifically needs them).  
+   
+   *Example response:* Lists each site/Home with its display name, the devices assigned to it, and how many customers it is shared with.
+
+3. **getDeviceStatus**  
+   *Check whether your devices are online, and their current live state*  
+   This tool reports connectivity for your devices (connected, and if offline, when they went offline), alongside live per-category status such as battery state of charge, EV charging state, and smart plug on/off. Note that `listDevices` is an inventory and does not include connection status — use this tool for that.  
+   
+   *Optional parameters:* `device_ids` — restrict to specific devices (the `device_id` values from **listDevices**); third-party devices (thermostats, appliances, vehicles) are only included when explicitly listed here. `site_gid` — restrict to a single site/Home (ignored when `device_ids` is supplied).  
+   
+   *Example response:* A connectivity summary (which devices are online vs. offline) plus the full grouped status payload with each device's current live values.
+
+4. **getDeviceDetails**  
+   *Get real-time status and details for an Emporia hardware device*  
+   This tool returns detailed information about your **Emporia hardware** devices (EV chargers, energy monitors, smart plugs, batteries) by passing one or more device serial numbers. The response includes relevant details for each device type, such as connection status, current state, charging rates, firmware, and more. Third-party devices (thermostats, appliances, vehicles) are **not** covered here — use **getDeviceStatus** for those. If you pass a mix that includes third-party ids, they are skipped and reported rather than failing the whole call.
    
    *Example response:* For an EV charger, shows whether your vehicle is connected, actively charging, current charging rate (in amps), and maximum available charging rate. For an energy monitor, shows firmware version, channel counts, and device status. For a smart plug, shows on/off state and connection status. For a battery, shows state of charge, capacity, and power flows.
 
-3. **getDevicesChannels**  
+5. **getDevicesChannels**  
    *Get detailed information about device channels and circuit configurations*  
-   This tool provides comprehensive information about all channels for your energy monitoring devices, including main and branch circuits. Essential for understanding your electrical system's structure.
+   This tool provides comprehensive information about all channels for your energy monitoring devices, including main and branch circuits. Essential for understanding your electrical system's structure. Each channel carries a `usableAsCircuitId` flag: use a channel's `channelId` as a `circuit_ids` value in the usage tools **only when `usableAsCircuitId` is true**. The combined `Mains` channel is flagged `false` because the usage endpoints reject it — query the individual legs (`Mains_A`/`B`/`C`) or branch circuits instead.
    
-   *Example response:* Returns device channel configurations, showing main branch circuits, combined circuits, and channel naming/numbering that can be referenced in other API calls.
+   *Example response:* Returns device channel configurations, showing main and branch circuits, combined circuits, channel naming/numbering, and which channel IDs can be used directly in usage queries.
 
-4. **getDeviceEnergyUsage**  
+6. **getDeviceEnergyUsage**  
    *Analyze energy consumption of any device or circuit over time*  
-   This tool retrieves historical energy usage data for any of your devices (EV chargers, energy monitors, smart plugs, batteries, etc.) with customizable time periods and resolutions. For devices with multiple circuits/channels (like energy monitors or batteries), you can specify which circuits to query.  
+   This tool retrieves historical energy usage data for any of your devices (EV chargers, energy monitors, smart plugs, batteries, etc.) with customizable time periods and resolutions. `circuit_ids` is **required for Vue energy monitors** and **optional/ignored for EV chargers, smart plugs, and batteries** — batteries always return all of their streams (charge, discharge, PV, grid, load). Third-party device ids are skipped and reported rather than failing the call.  
    
    *Example response:* Returns time-series energy data (in kWh) for specified devices and (optionally) circuits, with timestamps and consumption values at your chosen resolution (from minutes to years).
 
-5. **getDevicePowerUsage**  
+7. **getDevicePowerUsage**  
    *Monitor real-time power draw from any device or circuit*  
-   This tool provides power usage data showing how much electricity your devices or specific circuits are drawing at different times. Useful for understanding power consumption patterns across your electrical system.  
+   This tool provides power usage data showing how much electricity your devices or specific circuits are drawing at different times. Useful for understanding power consumption patterns across your electrical system. As with energy usage, `circuit_ids` is **required for Vue energy monitors** and **optional/ignored for EV chargers, smart plugs, and batteries**; third-party device ids are skipped and reported.  
    
    *Example response:* Returns time-series power data (in watts) for specified devices and (optionally) circuits, with timestamps and average power values at minute or 15-minute intervals.
 
-6. **getBatteryStateOfCharge**  
+8. **getBatteryStateOfCharge**  
    *Track Home Battery charge levels over time*  
    This tool provides historical state of charge (SoC) data for your home battery storage systems with customizable time periods and resolutions. Essential for understanding how your battery's charge level fluctuates throughout the day, week, or month. Important note - for Home Battery systems only, not applicable for EVSE/Electric Vehicle SoC
    
    *Example response:* Returns time-series state of charge data (as percentage values 0-100%) for battery systems, with timestamps and average state of charge values at your chosen resolution (minutes, hours, or days).
 
-7. **getEVChargingReport**  
+9. **getEVChargingReport**  
    *Get comprehensive reports of your EV charging activity*  
    This tool provides detailed reports about your electric vehicle charging patterns, costs, and potential savings over a specified time period. Essential for understanding charging habits and optimizing for cost savings.
    
    *Example response:* Returns a comprehensive report including daily charging totals, individual charging sessions, energy usage (kWh), charging costs, and potential savings based on utility rate plans.
 
-8. **getEVChargerSessions**  
+10. **getEVChargerSessions**  
    *Track plug-in and charging events for your EV chargers*  
    This tool provides detailed information about when vehicles were connected to your EV chargers and the charging sessions that occurred during those connection periods. Useful for understanding vehicle connection times and actual charging times.
    
    *Example response:* Returns a list of plug-in/plug-out events for each charger, including timestamps and energy usage data for each charging session within those connection periods.
+
+## Known Behaviors & Cloud Limitations
+
+Some behaviors are inherent to the Emporia cloud APIs the MCP calls and cannot be changed from within this server. They are documented here so agents and users know what to expect:
+
+- **Circuit ID vocabularies differ by endpoint.** `getDevicesChannels` reports channel IDs like `Mains_A` and `Branch_1`, while `getDeviceDetails` reports the same circuits in a numeric form (`Main_1`, `1`). The usage tools accept either form, but the combined `Mains` channel is **not** accepted. Prefer the `channelId` values from `getDevicesChannels` that have `usableAsCircuitId: true`.
+- **Device counts differ between tools.** `listDevices` returns every device (including third-party thermostats, appliances, and vehicles). `getDeviceStatus` and `getDevicesChannels` cover Emporia hardware only, so their counts can be lower — third-party statuses appear in `getDeviceStatus` only when you pass their ids explicitly via `device_ids`.
+- **Batteries return all streams.** The battery usage endpoints ignore `circuit_ids` and always return every stream (charge, discharge, PV, grid, load, total). Filter client-side if you need a subset.
+- **EV charging report intervals/copy are cloud-generated.** `getEVChargingReport` normalizes the requested window to the device's local time zone (so the echoed interval may be offset from what you sent) and includes a human-readable narrative ("last month", etc.) produced by the cloud.
+- **Two type vocabularies.** `listDevices` labels devices with the cloud device-type enum (`MONITOR`, `EV_CHARGER`, `OUTLET`, `BATTERY`, …), while `getDeviceDetails`/usage tools group their results under internal keys (`vue3`, `evse`, `smartplug`, `battery`). Both refer to the same devices.
