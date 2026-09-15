@@ -11,4 +11,4 @@ export const EMPORIA_API_ORIGIN = process.env.EMPORIA_API_ORIGIN || "https://c-a
 export const COGNITO_URL = "https://cognito-idp.us-east-2.amazonaws.com/";
 export const COGNITO_CLIENT_ID = process.env.EMPORIA_COGNITO_CLIENT_ID || "4qte47jbstod8apnfic0bunmrq";
 // Application settings
-export const USER_AGENT = "emporia-mcp/0.2.0";
+export const USER_AGENT = "emporia-mcp/0.2.1";

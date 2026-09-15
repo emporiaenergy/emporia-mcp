@@ -21,8 +21,10 @@ export const DEVICE_TYPE_CONFIGS: DeviceTypeConfig[] = [
   },
   {
     type: "vueutility",
-    endpoint: "energy-monitors",
-    responseType: "EnergyMonitorsResponse",
+    // Z-serial Utility Connect devices are not energy monitors on the cloud API: they are
+    // served by the dedicated `utility-connects` endpoints, which do not accept circuit_ids.
+    endpoint: "utility-connects",
+    responseType: "UtilityConnectsResponse",
     firstChars: ["Z"],
   },
   {

@@ -17,19 +17,27 @@ async function main() {
     const pendingOAuthRequests = new Map();
     const apiService = new EmporiaApiService(null);
     /**
-     * Emporia MCP Server
-     * Provides tools for interacting with Emporia Energy devices and usage data
+     * Creates a new Emporia MCP Server instance.
+     *
+     * IMPORTANT: A given McpServer/Server instance can only be connected to a single
+     * transport at a time (connect() overwrites the previous transport). Since this
+     * remote server handles many concurrent client sessions, each session MUST get
+     * its own McpServer instance — never share one server across multiple transports,
+     * or sessions will hang, swap JSON-RPC replies, or leak each other's tool results.
      */
-    const server = new McpServer({
-        name: "emporia-mcp",
-        version: "0.2.0",
-        capabilities: {
-            resources: {},
-            tools: {},
-        },
-    });
-    // Register all Emporia tools with the server
-    registerEmporiaTools(server, apiService);
+    function createMcpServer() {
+        const server = new McpServer({
+            name: "emporia-mcp",
+            version: "0.2.1",
+            capabilities: {
+                resources: {},
+                tools: {},
+            },
+        });
+        // Register all Emporia tools with the server
+        registerEmporiaTools(server, apiService);
+        return server;
+    }
     // Add global error handler
     process.on("unhandledRejection", (reason) => {
         log("Unhandled Rejection", { reason: String(reason) }, "error");
@@ -39,6 +47,27 @@ async function main() {
         streamable: {},
         sse: {},
     };
+    // Streamable HTTP sessions don't always end with an explicit DELETE (e.g. a client that
+    // crashes, or one that creates a short-lived client per request/message — as GeminiAdapter
+    // does — and doesn't reliably terminate it), which would otherwise leak the transport and
+    // its per-session McpServer forever. Track each session's McpServer + last-activity time
+    // alongside its transport so an idle sweep can evict sessions that have gone silent.
+    const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+    const SESSION_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+    const streamableSessionInfo = {};
+    setInterval(() => {
+        const now = Date.now();
+        for (const [sessionId, info] of Object.entries(streamableSessionInfo)) {
+            if (now - info.lastActivity > SESSION_IDLE_TIMEOUT_MS) {
+                log(`Closing idle streamable session ${sessionId}`, null, "info", "EXPRESS");
+                // Closing the transport triggers its onclose handler, which cleans up
+                // transports.streamable/streamableSessionInfo and closes the McpServer.
+                transports.streamable[sessionId]?.close().catch((error) => {
+                    log(`Error closing idle transport for streamable session ${sessionId}`, error, "error");
+                });
+            }
+        }
+    }, SESSION_SWEEP_INTERVAL_MS).unref();
     /**
      * Emporia Remote MCP Express Server
      * Exposes Emporia energy monitoring data via the MCP protocol for LLM integration. Supports SSE and Streamable HTTP transport types.
@@ -55,22 +84,73 @@ async function main() {
             if (sessionId && transports.streamable[sessionId]) {
                 // Reuse existing transport
                 transport = transports.streamable[sessionId];
+                // Check auth before touching the transport for an existing session.
+                const authorization = req.headers["authorization"];
+                if (!authorization || !authorization.startsWith("Bearer ")) {
+                    log(`/streamable: Missing or invalid Authorization header: ${authorization}`, null, "error", "EXPRESS");
+                    return res.status(401).json({
+                        jsonrpc: "2.0",
+                        error: {
+                            code: -32001,
+                            message: "Unauthorized: Missing or invalid Authorization header",
+                        },
+                        id: null,
+                    });
+                }
+                // Add token to request AuthInfo. clientId and scopes are required but unused.
+                req.auth = {
+                    token: authorization,
+                    clientId: "",
+                    scopes: [],
+                };
+                // Refresh the idle timer so an actively-used session is never swept.
+                if (streamableSessionInfo[sessionId]) {
+                    streamableSessionInfo[sessionId].lastActivity = Date.now();
+                }
             }
             else if (!sessionId && isInitializeRequest(req.body)) {
+                // Check auth BEFORE creating or connecting a new transport, so an unauthenticated
+                // initialize never touches a server/transport pair.
+                const authorization = req.headers["authorization"];
+                if (!authorization || !authorization.startsWith("Bearer ")) {
+                    log(`/streamable: Missing or invalid Authorization header: ${authorization}`, null, "error", "EXPRESS");
+                    return res.status(401).json({
+                        jsonrpc: "2.0",
+                        error: {
+                            code: -32001,
+                            message: "Unauthorized: Missing or invalid Authorization header",
+                        },
+                        id: null,
+                    });
+                }
+                // Add token to request AuthInfo. clientId and scopes are required but unused.
+                req.auth = {
+                    token: authorization,
+                    clientId: "",
+                    scopes: [],
+                };
+                // Each session gets its own McpServer instance so concurrent sessions never share
+                // (and overwrite) a single transport connection.
+                const sessionServer = createMcpServer();
                 // Create the StreamableHttp transport
                 transport = new StreamableHTTPServerTransport({
                     sessionIdGenerator: () => randomUUID(),
                     onsessioninitialized: (sessionId) => {
                         transports.streamable[sessionId] = transport;
+                        streamableSessionInfo[sessionId] = { server: sessionServer, lastActivity: Date.now() };
                     },
                 });
                 transport.onclose = () => {
-                    if (transport.sessionId) {
-                        delete transports.streamable[transport.sessionId];
+                    const closedSessionId = transport.sessionId;
+                    if (closedSessionId) {
+                        delete transports.streamable[closedSessionId];
+                        delete streamableSessionInfo[closedSessionId];
                     }
+                    sessionServer.close().catch((error) => {
+                        log(`Error closing McpServer for streamable session ${closedSessionId}`, error, "error");
+                    });
                 };
-                // Connect the server to this transport
-                await server.connect(transport);
+                await sessionServer.connect(transport);
             }
             else {
                 return res.status(400).json({
@@ -82,23 +162,6 @@ async function main() {
                     id: null,
                 });
             }
-            const authorization = req.headers["authorization"];
-            if (!authorization || !authorization.startsWith("Bearer ")) {
-                return res.status(401).json({
-                    jsonrpc: "2.0",
-                    error: {
-                        code: -32001,
-                        message: "Unauthorized: Missing or invalid Authorization header",
-                    },
-                    id: null,
-                });
-            }
-            // Add token to request AuthInfo. clientId and scopes are required but unused.
-            req.auth = {
-                token: authorization,
-                clientId: "",
-                scopes: [],
-            };
             await transport.handleRequest(req, res, req.body);
         }
         catch (error) {
@@ -114,11 +177,20 @@ async function main() {
             // Create SSE transport for legacy clients
             const transport = new SSEServerTransport("/messages", res);
             transports.sse[transport.sessionId] = transport;
-            // Handle client disconnect
+            // Each session gets its own McpServer instance so concurrent sessions never share
+            // (and overwrite) a single transport connection.
+            const sessionServer = createMcpServer();
+            // Handle client disconnect. Unlike streamable sessions, SSE keeps a single long-lived
+            // HTTP connection open for the life of the session, so "close" reliably fires when the
+            // client disconnects (no idle sweep needed) — but the per-session McpServer still needs
+            // to be closed explicitly here, or it (and its tool handlers) leaks forever.
             req.on("close", () => {
                 delete transports.sse[transport.sessionId];
+                sessionServer.close().catch((error) => {
+                    log(`Error closing McpServer for SSE session ${transport.sessionId}`, error, "error");
+                });
             });
-            await server.connect(transport);
+            await sessionServer.connect(transport);
         }
         catch (error) {
             log("Error in legacy SSE endpoint", error, "error");
@@ -179,6 +251,7 @@ async function main() {
     app.get("/.well-known/oauth-protected-resource/:transport", (req, res) => {
         const transport = req.params.transport;
         if (!transport || (transport !== "sse" && transport !== "streamable")) {
+            log(`/.well-known/oauth-protected-resource/:transport: unknown transport ${transport}`, null, "error", "EXPRESS");
             return res.status(404);
         }
         const metadata = {
@@ -211,6 +284,7 @@ async function main() {
     app.get("/oauth/authorize", (req, res) => {
         const { redirect_uri, client_id, code_challenge, code_challenge_method } = req.query;
         if (!redirect_uri || !client_id) {
+            log(`/oauth/authorize: Missing required parameters: redirect_uri=${redirect_uri}; client_id=${client_id}`, null, "error", "EXPRESS");
             return res.status(400).json({ error: "Missing required parameters: redirect_uri and client_id" });
         }
         // Generate a unique state to track this request
@@ -240,6 +314,7 @@ async function main() {
         const sessionId = state;
         const session = sessionId ? pendingOAuthRequests.get(sessionId) : null;
         if (!session) {
+            log(`/oauth/callback: invalid or expired session: ${sessionId}`, null, "error", "EXPRESS");
             return res.status(400).json({
                 error: "invalid_request",
                 error_description: "Invalid or expired session",
@@ -261,6 +336,7 @@ async function main() {
             return res.redirect(`${session.redirect_uri}?${successParams.toString()}`);
         }
         // Something went wrong
+        log("/oauth/callback: No authorization code received", null, "error", "EXPRESS");
         res.status(400).json({
             error: "invalid_request",
             error_description: "No authorization code received",

@@ -24,12 +24,23 @@ import {
 import { DEVICE_TYPE_CONFIGS, DEVICE_TYPE_CONFIGS_BY_TYPE } from "../constants/deviceTypes.js";
 import { JsonObject } from "../types/jsonValue.js";
 
+// Universal device ids for third-party devices (returned by listDevices/getDevicesStatus) are a
+// prefixed gid like "THERMOSTAT_82", "APPLIANCE_234", or "VEHICLE_12" — not an Emporia hardware
+// serial. These must be excluded before the first-character heuristic below, since some of their
+// prefixes (e.g. "APPLIANCE_" starting with "A") collide with Emporia serial prefixes (vue2 also
+// uses "A").
+const THIRD_PARTY_DEVICE_ID_PATTERN = /^(THERMOSTAT|APPLIANCE|VEHICLE)_\d+$/;
+
 function getDeviceTypeFromId(id: string): DeviceType | null {
   if (!id) {
     return null;
   }
 
   const upperId = id.toUpperCase();
+  if (THIRD_PARTY_DEVICE_ID_PATTERN.test(upperId)) {
+    return null;
+  }
+
   if (upperId.startsWith("XXXX")) {
     return "vue1";
   }
@@ -258,7 +269,15 @@ export class EmporiaApiService {
       deviceId: string;
       parentDeviceId?: string;
       channelCounts: { mains: number; branch: number; merged: number; total: number };
-      channelInfo: { name: string; channelId: string; channelNum: string; type: string; usableAsCircuitId: boolean }[];
+      channelInfo: {
+        name: string;
+        channelId: string;
+        channelNum: string;
+        type: string;
+        usableAsCircuitId: boolean;
+        parentChannelId: string | null;
+        childChannelIds: string[];
+      }[];
     }[];
   }> {
     try {
@@ -310,9 +329,22 @@ export class EmporiaApiService {
           }
         }
 
+        // Map each channel_id to the channel_id(s) whose parent_channel_id points to it, so
+        // Merged circuits can be matched to the Branch legs they combine (and vice versa),
+        // avoiding double-counted usage when a caller needs to pick non-overlapping circuits.
+        const childChannelIdsByParent = new Map<string, string[]>();
+        for (const c of channels) {
+          if (!c.parent_channel_id) {
+            continue;
+          }
+          const siblings = childChannelIdsByParent.get(c.parent_channel_id) ?? [];
+          siblings.push(c.channel_id);
+          childChannelIdsByParent.set(c.parent_channel_id, siblings);
+        }
+
         return {
           description:
-            '"Channels" list will provide the main and branch circuits for each device. Important to note that "Mains" represent a combined circuit of the primary service lines and each individual circuit will have "parent_channel_id" of "Mains". This is not to be confused with branch circuits that have a "channel_num" of 1, 2, or 3 - instead you can compare the "channel_id" to see "branch_XYZ". This detail is important as other API endpoints may return individual channel id\'s that might not be in the same format (and possible that channels 1, 2, 3 as ids would actually represent mains instead of branches in those other endpoints).',
+            '"Channels" list will provide the main and branch circuits for each device. Important to note that "Mains" represent a combined circuit of the primary service lines and each individual circuit will have "parent_channel_id" of "Mains". This is not to be confused with branch circuits that have a "channel_num" of 1, 2, or 3 - instead you can compare the "channel_id" to see "branch_XYZ". This detail is important as other API endpoints may return individual channel id\'s that might not be in the same format (and possible that channels 1, 2, 3 as ids would actually represent mains instead of branches in those other endpoints). "Merged" circuits combine one or more Branch/Mains circuits (see "child_channel_ids"); when totaling usage across circuits, use either a Merged circuit OR its children, never both, to avoid double-counting.',
           deviceGid,
           deviceId,
           parentDeviceId,
@@ -326,6 +358,10 @@ export class EmporiaApiService {
             // The combined "Mains" channel aggregates Mains_A/B/C and is NOT accepted as a
             // circuit_id by the energy/power usage tools; the split legs and branches are.
             usableAsCircuitId: c.channel_id !== "Mains",
+            // Which circuit (if any) this channel is combined into (e.g. a Branch's parent may be a Merged circuit).
+            parentChannelId: c.parent_channel_id ?? null,
+            // Which circuit(s) (if any) combine into this channel (e.g. a Merged circuit's children are the Branches it combines).
+            childChannelIds: childChannelIdsByParent.get(c.channel_id) ?? [],
           })),
         };
       });
@@ -479,8 +515,10 @@ export class EmporiaApiService {
     const { device_ids, start, end, power_resolution, circuit_ids } = params;
     const deviceGroups = groupDeviceIdsByType(device_ids);
 
-    // Validation: If any device is an energy monitor, circuit_ids must be provided and non-empty
-    const energyMonitorTypes: DeviceType[] = ["vue1", "vue2", "vue3", "vueutility"];
+    // Validation: If any device is a circuit-based energy monitor, circuit_ids must be provided
+    // and non-empty. Note vueutility (Z-serial Utility Connect) is NOT included here: it is
+    // served by the cloud's dedicated utility-connects endpoints, which do not accept circuit_ids.
+    const energyMonitorTypes: DeviceType[] = ["vue1", "vue2", "vue3"];
     const hasEnergyMonitor = Object.keys(deviceGroups).some((type) => energyMonitorTypes.includes(type as DeviceType));
     if (hasEnergyMonitor && (!circuit_ids || circuit_ids.length === 0)) {
       throw new Error(
@@ -495,7 +533,7 @@ export class EmporiaApiService {
       vue1: "energy-monitors/circuits/usages/power",
       vue2: "energy-monitors/circuits/usages/power",
       vue3: "energy-monitors/circuits/usages/power",
-      vueutility: "energy-monitors/circuits/usages/power",
+      vueutility: "utility-connects/usages/power",
     };
 
     try {
@@ -503,7 +541,7 @@ export class EmporiaApiService {
       const results = await Promise.all(
         Object.entries(deviceGroups).map(async ([type, ids]) => {
           const deviceType = type as DeviceType;
-          const isEnergyMonitor = deviceType.startsWith("vue");
+          const isEnergyMonitor = energyMonitorTypes.includes(deviceType);
           const endpointPath = DEVICE_POWER_USAGE_ENDPOINTS[deviceType];
           const parameters: any = {
             device_ids: ids.join(","),
@@ -557,8 +595,10 @@ export class EmporiaApiService {
     const { device_ids, start, end, energy_resolution, circuit_ids } = params;
     const deviceGroups = groupDeviceIdsByType(device_ids);
 
-    // Validation: If any device is an energy monitor, circuit_ids must be provided and non-empty
-    const energyMonitorTypes: DeviceType[] = ["vue1", "vue2", "vue3", "vueutility"];
+    // Validation: If any device is a circuit-based energy monitor, circuit_ids must be provided
+    // and non-empty. Note vueutility (Z-serial Utility Connect) is NOT included here: it is
+    // served by the cloud's dedicated utility-connects endpoints, which do not accept circuit_ids.
+    const energyMonitorTypes: DeviceType[] = ["vue1", "vue2", "vue3"];
     const hasEnergyMonitor = Object.keys(deviceGroups).some((type) => energyMonitorTypes.includes(type as DeviceType));
     if (hasEnergyMonitor && (!circuit_ids || circuit_ids.length === 0)) {
       throw new Error(
@@ -574,7 +614,7 @@ export class EmporiaApiService {
       vue1: "energy-monitors/circuits/usages/energy",
       vue2: "energy-monitors/circuits/usages/energy",
       vue3: "energy-monitors/circuits/usages/energy",
-      vueutility: "energy-monitors/circuits/usages/energy",
+      vueutility: "utility-connects/usages/energy",
     };
 
     try {
@@ -582,7 +622,7 @@ export class EmporiaApiService {
       const results = await Promise.all(
         Object.entries(deviceGroups).map(async ([type, ids]) => {
           const deviceType = type as DeviceType;
-          const isEnergyMonitor = deviceType.startsWith("vue");
+          const isEnergyMonitor = energyMonitorTypes.includes(deviceType);
           const endpointPath = DEVICE_ENERGY_USAGE_ENDPOINTS[deviceType];
           const parameters: any = {
             device_ids: ids.join(","),

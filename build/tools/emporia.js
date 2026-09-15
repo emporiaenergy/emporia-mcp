@@ -1,12 +1,48 @@
 import { partitionSupportedDeviceIds } from "../services/api.js";
 import { log } from "../utils/log.js";
 import { z } from "zod";
+import { randomUUID } from "crypto";
+/**
+ * Builds an LLM-friendly tool response containing a single text content block, whose text is a
+ * JSON-serialized object wrapping the given data alongside a unique `mcp_tool_result_id`.
+ *
+ * IMPORTANT: This single-content-block envelope is required by the chatbot's OpenAIAdapter, which
+ * only reads `content[0].text` and parses it as JSON to extract `mcp_tool_result_id`/`tool_result_data`
+ * (used to substitute `MCP_TOOL_RESULT={uuid}` placeholders in streamed responses for visualizations).
+ * Do not return multiple content blocks, or put non-JSON text in the first block.
+ */
+function buildToolResponse(data) {
+    const result = {
+        tool_result_data: data,
+        mcp_tool_result_id: randomUUID(),
+    };
+    return {
+        content: [
+            {
+                type: "text",
+                text: JSON.stringify(result),
+            },
+        ],
+    };
+}
+/** Builds an LLM-friendly error response for a failed tool call. */
+function buildToolErrorResponse(error) {
+    return {
+        content: [
+            {
+                type: "text",
+                text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+        ],
+        isError: true,
+    };
+}
 /**
  * Register all Emporia tools with the MCP server.
  */
 export function registerEmporiaTools(server, apiService) {
     // Register listDevices tool
-    server.tool("listDevices", {
+    server.tool("listDevices", "Returns a list of the user's Emporia devices (and any linked third-party devices) associated with their account.", {
         site_gid: z
             .number()
             .int()
@@ -48,44 +84,22 @@ export function registerEmporiaTools(server, apiService) {
                 };
             });
             // LLM-friendly output
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: result.customerInfo.email
-                            ? `Customer: ${result.customerInfo.email}${result.customerInfo.name ? ` (${result.customerInfo.name})` : ""}`
-                            : "Customer info unavailable.",
-                    },
-                    {
-                        type: "text",
-                        text: `Found ${result.deviceCount} device(s)${params.site_gid !== undefined ? ` for site ${params.site_gid}` : ""}. ` +
-                            `Types: ${Object.entries(deviceTypes)
-                                .map(([type, count]) => `${type}: ${count}`)
-                                .join(", ") || "none"}. ` +
-                            `${assignedToSite} of these are assigned to a site (see the site_gid field; use listSites for site details).`,
-                    },
-                    {
-                        type: "text",
-                        text: "Device Summary:\n" + JSON.stringify(devices, null, 2),
-                    },
-                    {
-                        type: "text",
-                        text: "Full device data available by calling relevant 'Details' tools (Emporia hardware device types: MONITOR, EV_CHARGER, OUTLET, BATTERY). For live connection status (connected / offline_since) and current device state, call getDeviceStatus.",
-                    },
-                ],
-            };
+            return buildToolResponse({
+                customer: result.customerInfo.email
+                    ? `Customer: ${result.customerInfo.email}${result.customerInfo.name ? ` (${result.customerInfo.name})` : ""}`
+                    : "Customer info unavailable.",
+                summary: `Found ${result.deviceCount} device(s)${params.site_gid !== undefined ? ` for site ${params.site_gid}` : ""}. ` +
+                    `Types: ${Object.entries(deviceTypes)
+                        .map(([type, count]) => `${type}: ${count}`)
+                        .join(", ") || "none"}. ` +
+                    `${assignedToSite} of these are assigned to a site (see the site_gid field; use listSites for site details).`,
+                devices,
+                note: "Full device data available by calling relevant 'Details' tools (Emporia hardware device types: MONITOR, EV_CHARGER, OUTLET, BATTERY). For live connection status (connected / offline_since) and current device state, call getDeviceStatus.",
+            });
         }
         catch (error) {
             log("Error in listDevices tool", { error: String(error) }, "error");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-                isError: true,
-            };
+            return buildToolErrorResponse(error);
         }
     });
     // Register listSites tool
@@ -115,38 +129,19 @@ export function registerEmporiaTools(server, apiService) {
                     service_address: s.service_address ?? null,
                 };
             });
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Found ${sites.length} site(s) (a "site" is what the Emporia app calls a "Home"). A site/Home groups devices (0, one, or many) under a single location; the device_ids listed for each site match the device_id values returned by listDevices.`,
-                    },
-                    {
-                        type: "text",
-                        text: "Site Summary:\n" + JSON.stringify(sites, null, 2),
-                    },
-                    {
-                        type: "text",
-                        text: `To list only the devices on a specific site, call listDevices with that site's site_gid.${params.include_members ? "" : " Only member counts are shown; pass include_members: true to also return the shared members' email addresses."}`,
-                    },
-                ],
-            };
+            return buildToolResponse({
+                summary: `Found ${sites.length} site(s) (a "site" is what the Emporia app calls a "Home"). A site/Home groups devices (0, one, or many) under a single location; the device_ids listed for each site match the device_id values returned by listDevices.`,
+                sites,
+                note: `To list only the devices on a specific site, call listDevices with that site's site_gid.${params.include_members ? "" : " Only member counts are shown; pass include_members: true to also return the shared members' email addresses."}`,
+            });
         }
         catch (error) {
             log("Error in listSites tool", { error: String(error) }, "error");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-                isError: true,
-            };
+            return buildToolErrorResponse(error);
         }
     });
     // Register getDeviceStatus tool
-    server.tool("getDeviceStatus", {
+    server.tool("getDeviceStatus", "Returns live connectivity and current state (e.g. state of charge, charging state, on/off) for the user's devices, grouped by category.", {
         device_ids: z
             .array(z.string())
             .optional()
@@ -179,44 +174,25 @@ export function registerEmporiaTools(server, apiService) {
                 .filter(([, n]) => n > 0)
                 .map(([c, n]) => `${c}: ${n}`)
                 .join(", ");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Retrieved status for ${totalDevices} device(s)${categoryBreakdown ? ` (${categoryBreakdown})` : ""}. ` +
-                            `Emporia-hardware connectivity: ${connections.length - offline.length} connected, ${offline.length} offline.` +
-                            (result.command_acknowledged !== undefined ? ` command_acknowledged: ${result.command_acknowledged}.` : "") +
-                            (params.device_ids === undefined || params.device_ids.length === 0
-                                ? " (Third-party devices — thermostats, appliances, vehicles — are only included when their ids are passed in device_ids.)"
-                                : ""),
-                    },
-                    {
-                        type: "text",
-                        text: "Emporia-hardware connectivity:\n" + JSON.stringify(connectivitySummary, null, 2),
-                    },
-                    {
-                        type: "text",
-                        text: "Full status (grouped by category: monitors, evses, outlets, batteries, thermostats, appliances, vehicles) with live values such as state of charge, charging state, and on/off:\n" +
-                            JSON.stringify(result, null, 2),
-                    },
-                ],
-            };
+            return buildToolResponse({
+                summary: `Retrieved status for ${totalDevices} device(s)${categoryBreakdown ? ` (${categoryBreakdown})` : ""}. ` +
+                    `Emporia-hardware connectivity: ${connections.length - offline.length} connected, ${offline.length} offline.` +
+                    (result.command_acknowledged !== undefined ? ` command_acknowledged: ${result.command_acknowledged}.` : "") +
+                    (params.device_ids === undefined || params.device_ids.length === 0
+                        ? " (Third-party devices — thermostats, appliances, vehicles — are only included when their ids are passed in device_ids.)"
+                        : ""),
+                connectivity: connectivitySummary,
+                status: result,
+                note: "Status is grouped by category: monitors, evses, outlets, batteries, thermostats, appliances, vehicles. Includes live values such as state of charge, charging state, and on/off.",
+            });
         }
         catch (error) {
             log("Error in getDeviceStatus tool", { error: String(error) }, "error");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-                isError: true,
-            };
+            return buildToolErrorResponse(error);
         }
     });
     // Register getDevicesChannels tool
-    server.tool("getDevicesChannels", {}, async (request, extra) => {
+    server.tool("getDevicesChannels", "Returns a summary of the circuits/channels available on the user's Vue energy monitor devices.", {}, async (request, extra) => {
         try {
             const result = await apiService.getDevicesChannels(extra.authInfo?.token);
             // Create a formatted summary of device channels
@@ -229,98 +205,55 @@ export function registerEmporiaTools(server, apiService) {
                     availableChannels: device.channelInfo,
                 };
             });
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Retrieved channel data for ${result.deviceCount} device(s).`,
-                    },
-                    {
-                        type: "text",
-                        text: "Channel Summary:\n" + JSON.stringify(channelSummary, null, 2),
-                    },
-                    {
-                        type: "text",
-                        text: 'This data shows all available circuits/channels for each device. Use a channel\'s `channelId` as a circuit_id in the energy/power usage tools ONLY when its `usableAsCircuitId` is true. The combined "Mains" channel (usableAsCircuitId: false) aggregates Mains_A/B/C and is rejected by the usage endpoints — query the individual legs (Mains_A, Mains_B, Mains_C) or branch circuits instead.',
-                    },
-                ],
-            };
+            return buildToolResponse({
+                summary: `Retrieved channel data for ${result.deviceCount} device(s).`,
+                devices: channelSummary,
+                note: 'Use a channel\'s `channelId` as a circuit_id in the energy/power usage tools ONLY when its `usableAsCircuitId` is true. The combined "Mains" channel (usableAsCircuitId: false) aggregates Mains_A/B/C and is rejected by the usage endpoints — query the individual legs (Mains_A, Mains_B, Mains_C) or branch circuits instead. A "Merged" channel\'s `childChannelIds` lists the circuits it combines (and a combined circuit\'s `parentChannelId` points back to it) — when totaling usage, use either a Merged circuit OR its children, never both, to avoid double-counting.',
+            });
         }
         catch (error) {
             log("Error in getDevicesChannels tool", { error: String(error) }, "error");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-                isError: true,
-            };
+            return buildToolErrorResponse(error);
         }
     });
     // Register getDeviceDetails tool (replaces all get____Details tools)
-    server.tool("getDeviceDetails", {
-        manufacturerIds: z.array(z.string()).describe("Array of device manufacturer IDs (serial numbers) to fetch details for"),
+    server.tool("getDeviceDetails", "Returns specific details about one or more of the user's Emporia hardware devices. The details vary depending on the type of device.", {
+        device_ids: z.array(z.string()).describe("Array of device serial numbers (manufacturer IDs) to fetch details for"),
     }, async (params, extra) => {
         try {
             // Separate ids this tool can route (Emporia hardware) from third-party ids
             // (e.g. THERMOSTAT_20072 from listDevices) so one unsupported id doesn't fail
             // the whole batch. There is no device-details endpoint for third-party devices;
             // their live state comes from getDeviceStatus instead.
-            const { supported, unsupported } = partitionSupportedDeviceIds(params.manufacturerIds);
+            const { supported, unsupported } = partitionSupportedDeviceIds(params.device_ids);
             const unsupportedNote = unsupported.length > 0
-                ? [
-                    {
-                        type: "text",
-                        text: `Skipped ${unsupported.length} unsupported id(s) (not Emporia hardware): ${unsupported.join(", ")}. getDeviceDetails only covers Emporia hardware (MONITOR, EV_CHARGER, OUTLET, BATTERY). For thermostats/appliances/vehicles, use getDeviceStatus.`,
-                    },
-                ]
-                : [];
+                ? `Skipped ${unsupported.length} unsupported id(s) (not Emporia hardware): ${unsupported.join(", ")}. getDeviceDetails only covers Emporia hardware (MONITOR, EV_CHARGER, OUTLET, BATTERY). For thermostats/appliances/vehicles, use getDeviceStatus.`
+                : null;
             if (supported.length === 0) {
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: "No Emporia hardware ids were provided, so there are no device details to retrieve.",
-                        },
-                        ...unsupportedNote,
-                    ],
-                };
+                return buildToolResponse({
+                    summary: "No Emporia hardware ids were provided, so there are no device details to retrieve.",
+                    ...(unsupportedNote ? { unsupported_note: unsupportedNote } : {}),
+                });
             }
             const result = await apiService.getDeviceDetails(extra.authInfo?.token, supported);
-            // Format the response for each device type
-            const content = Object.entries(result).map(([type, { data }]) => ({
-                type: "text",
-                text: `Retrieved ${type} details for ${data.success?.length || 0} device(s). ` +
-                    (data.error?.length ? `Failed for ${data.error.length} device(s).` : ""),
-            }));
-            return {
-                content: [
-                    ...unsupportedNote,
-                    ...content,
-                    {
-                        type: "text",
-                        text: JSON.stringify(result, null, 2),
-                    },
-                ],
-            };
+            // Summarize the response for each device type
+            const summary = Object.entries(result)
+                .map(([type, { data }]) => `Retrieved ${type} details for ${data.success?.length || 0} device(s). ` +
+                (data.error?.length ? `Failed for ${data.error.length} device(s).` : ""))
+                .join(" ");
+            return buildToolResponse({
+                summary,
+                ...(unsupportedNote ? { unsupported_note: unsupportedNote } : {}),
+                details: result,
+            });
         }
         catch (error) {
             log("Error in getDeviceDetails tool", { error: String(error) }, "error");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-                isError: true,
-            };
+            return buildToolErrorResponse(error);
         }
     });
     // Add tool for Battery State of Charge
-    server.tool("getBatteryStateOfCharge", {
+    server.tool("getBatteryStateOfCharge", "Returns the state of charge of one or more Home Battery systems over a given timespan.", {
         device_ids: z
             .array(z.string())
             .describe("Array of device serial numbers (manufacturer IDs) to fetch state of charge data for. This tool is specifically for Home Battery systems/devices only, not for EVSE/Electric Vehicle battery information."),
@@ -330,114 +263,57 @@ export function registerEmporiaTools(server, apiService) {
     }, async (params, extra) => {
         try {
             const result = await apiService.getBatteryStateOfCharge(extra.authInfo?.token, params);
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Retrieved state of charge data for ${result.stateOfChargeData.success?.length || 0} Battery device(s)` +
-                            ` from ${result.start} to ${result.end} with ${result.state_of_charge_resolution} resolution.`,
-                    },
-                    {
-                        type: "text",
-                        text: "Note: Battery state of charge data shows the percentage level of the battery system over time, useful for analyzing charging and discharging patterns.",
-                    },
-                    {
-                        type: "text",
-                        text: JSON.stringify(result, null, 2),
-                    },
-                ],
-            };
+            return buildToolResponse({
+                summary: `Retrieved state of charge data for ${result.stateOfChargeData.success?.length || 0} Battery device(s)` +
+                    ` from ${result.start} to ${result.end} with ${result.state_of_charge_resolution} resolution.`,
+                note: "Battery state of charge data shows the percentage level of the battery system over time, useful for analyzing charging and discharging patterns.",
+                result,
+            });
         }
         catch (error) {
             log("Error in getBatteryStateOfCharge tool", { error: String(error) }, "error");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-                isError: true,
-            };
+            return buildToolErrorResponse(error);
         }
     });
     // Add tool for EV Charging Report
-    server.tool("getEVChargingReport", {
+    server.tool("getEVChargingReport", "Generates a report for one of the user's EV chargers, including energy used, cost of charging, and potential savings over a given timespan.", {
         device_id: z.string().describe("Device serial number (manufacturer ID) of the EV charger to fetch charging report for"),
         start: z.string().describe("Start timestamp in ISO 8601 format: YYYY-MM-DDTHH:MM:SSSZ (e.g. 2025-05-14T00:00:00Z)"),
         end: z.string().describe("End timestamp in ISO 8601 format: YYYY-MM-DDTHH:MM:SSSZ (e.g. 2025-05-14T23:59:59Z)"),
     }, async (params, extra) => {
         try {
             const result = await apiService.getEVChargingReport(extra.authInfo?.token, params);
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Retrieved EV charging report for device ${result.device_id}` + ` from ${result.interval.start} to ${result.interval.end}.`,
-                    },
-                    {
-                        type: "text",
-                        text: "Note: The EV charging report provides detailed information about charging sessions, including energy usage, costs, potential savings, and plug-in/charging patterns.",
-                    },
-                    {
-                        type: "text",
-                        text: JSON.stringify(result, null, 2),
-                    },
-                ],
-            };
+            return buildToolResponse({
+                summary: `Retrieved EV charging report for device ${result.device_id}` + ` from ${result.interval.start} to ${result.interval.end}.`,
+                note: "The EV charging report provides detailed information about charging sessions, including energy usage, costs, potential savings, and plug-in/charging patterns.",
+                result,
+            });
         }
         catch (error) {
             log("Error in getEVChargingReport tool", { error: String(error) }, "error");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-                isError: true,
-            };
+            return buildToolErrorResponse(error);
         }
     });
     // Add tool for EV Charger Sessions
-    server.tool("getEVChargerSessions", {
+    server.tool("getEVChargerSessions", "Returns a list of charging sessions (plug-in/plug-out events) for one or more EV chargers over a given timespan.", {
         device_ids: z.array(z.string()).describe("Array of device serial numbers (manufacturer IDs) to fetch sessions for"),
         start: z.string().describe("Start timestamp in ISO 8601 format: YYYY-MM-DDTHH:MM:SSSZ (e.g. 2025-05-14T00:00:00Z)"),
         end: z.string().describe("End timestamp in ISO 8601 format: YYYY-MM-DDTHH:MM:SSSZ (e.g. 2025-05-14T23:59:59Z)"),
     }, async (params, extra) => {
         try {
             const result = await apiService.getEVChargerSessions(extra.authInfo?.token, params);
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Retrieved EV charger sessions for ${result.device_ids.length} device(s)` + ` from ${result.start} to ${result.end}.`,
-                    },
-                    {
-                        type: "text",
-                        text: "Note: The EV charger sessions provide detailed information about plug-in and plug-out events, along with the charging sessions that occurred while the vehicle was connected.",
-                    },
-                    {
-                        type: "text",
-                        text: JSON.stringify(result, null, 2),
-                    },
-                ],
-            };
+            return buildToolResponse({
+                summary: `Retrieved EV charger sessions for ${result.device_ids.length} device(s)` + ` from ${result.start} to ${result.end}.`,
+                note: "The EV charger sessions provide detailed information about plug-in and plug-out events, along with the charging sessions that occurred while the vehicle was connected.",
+                result,
+            });
         }
         catch (error) {
             log("Error in getEVChargerSessions tool", { error: String(error) }, "error");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-                isError: true,
-            };
+            return buildToolErrorResponse(error);
         }
     });
-    server.tool("getDevicePowerUsage", {
+    server.tool("getDevicePowerUsage", "Returns a time series of power usage (in watts) for one or more devices over a given timespan.", {
         device_ids: z
             .array(z.string())
             .describe("Array of device serial numbers (manufacturer IDs) to fetch power usage data for - NOTE: _*Not*_ 'device_gid'."),
@@ -447,56 +323,38 @@ export function registerEmporiaTools(server, apiService) {
         circuit_ids: z
             .array(z.string())
             .optional()
-            .describe('Array of circuit IDs to fetch usage data for. REQUIRED for Vue energy monitor devices; omit for EV chargers, smart plugs, and batteries (they ignore it — batteries always return all of their streams). Use the `channelId` values from getDevicesChannels whose `usableAsCircuitId` is true. NOTE: "Mains" is NOT a valid circuit ID since it combines the valid circuits "Mains_A", "Mains_B", and "Mains_C".'),
+            .describe('Array of circuit IDs to fetch usage data for. REQUIRED for circuit-based Vue energy monitors (vue1, vue2, vue3); omit for EV chargers, smart plugs, batteries, and Utility Connect (vueutility) devices (they ignore it — batteries always return all of their streams). Use the `channelId` values from getDevicesChannels whose `usableAsCircuitId` is true. NOTE: "Mains" is NOT a valid circuit ID since it combines the valid circuits "Mains_A", "Mains_B", and "Mains_C".'),
     }, async (params, extra) => {
         try {
             const { supported, unsupported } = partitionSupportedDeviceIds(params.device_ids);
             const unsupportedNote = unsupported.length > 0
-                ? [
-                    {
-                        type: "text",
-                        text: `Skipped ${unsupported.length} unsupported id(s) (not Emporia hardware): ${unsupported.join(", ")}. Power usage is only available for Emporia hardware devices.`,
-                    },
-                ]
-                : [];
+                ? `Skipped ${unsupported.length} unsupported id(s) (not Emporia hardware): ${unsupported.join(", ")}. Power usage is only available for Emporia hardware devices.`
+                : null;
             if (supported.length === 0) {
-                return {
-                    content: [{ type: "text", text: "No Emporia hardware ids were provided, so there is no power usage to retrieve." }, ...unsupportedNote],
-                };
+                return buildToolResponse({
+                    summary: "No Emporia hardware ids were provided, so there is no power usage to retrieve.",
+                    ...(unsupportedNote ? { unsupported_note: unsupportedNote } : {}),
+                });
             }
             const result = await apiService.getDevicePowerUsage(extra.authInfo?.token, { ...params, device_ids: supported });
-            // Format the response for each device type
-            const content = Object.entries(result).map(([type, { device_ids, powerData }]) => ({
-                type: "text",
-                text: `Retrieved power usage data for ${type} device(s): ${device_ids.join(", ")}. ` +
-                    (powerData.success ? `Success count: ${powerData.success.length}` : "") +
-                    (powerData.error && powerData.error.length ? `, Failed: ${powerData.error.length}` : ""),
-            }));
-            return {
-                content: [
-                    ...unsupportedNote,
-                    ...content,
-                    {
-                        type: "text",
-                        text: JSON.stringify(result, null, 2),
-                    },
-                ],
-            };
+            // Summarize the response for each device type
+            const summary = Object.entries(result)
+                .map(([type, { device_ids, powerData }]) => `Retrieved power usage data for ${type} device(s): ${device_ids.join(", ")}. ` +
+                (powerData.success ? `Success count: ${powerData.success.length}` : "") +
+                (powerData.error && powerData.error.length ? `, Failed: ${powerData.error.length}` : ""))
+                .join(" ");
+            return buildToolResponse({
+                summary,
+                ...(unsupportedNote ? { unsupported_note: unsupportedNote } : {}),
+                result,
+            });
         }
         catch (error) {
             log("Error in getDevicePowerUsage tool", { error: String(error) }, "error");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-                isError: true,
-            };
+            return buildToolErrorResponse(error);
         }
     });
-    server.tool("getDeviceEnergyUsage", {
+    server.tool("getDeviceEnergyUsage", "Returns a time series of energy usage (in kWh) for one or more devices over a given timespan.", {
         device_ids: z
             .array(z.string())
             .describe("Array of device serial numbers (manufacturer IDs) to fetch energy usage data for - NOTE: _*Not*_ 'device_gid'."),
@@ -508,53 +366,35 @@ export function registerEmporiaTools(server, apiService) {
         circuit_ids: z
             .array(z.string())
             .optional()
-            .describe('Array of circuit IDs to fetch usage data for. REQUIRED for Vue energy monitor devices; omit for EV chargers, smart plugs, and batteries (they ignore it — batteries always return all of their streams). Use the `channelId` values from getDevicesChannels whose `usableAsCircuitId` is true. NOTE: "Mains" is NOT a valid circuit ID since it combines the valid circuits "Mains_A", "Mains_B", and "Mains_C".'),
+            .describe('Array of circuit IDs to fetch usage data for. REQUIRED for circuit-based Vue energy monitors (vue1, vue2, vue3); omit for EV chargers, smart plugs, batteries, and Utility Connect (vueutility) devices (they ignore it — batteries always return all of their streams). Use the `channelId` values from getDevicesChannels whose `usableAsCircuitId` is true. NOTE: "Mains" is NOT a valid circuit ID since it combines the valid circuits "Mains_A", "Mains_B", and "Mains_C".'),
     }, async (params, extra) => {
         try {
             const { supported, unsupported } = partitionSupportedDeviceIds(params.device_ids);
             const unsupportedNote = unsupported.length > 0
-                ? [
-                    {
-                        type: "text",
-                        text: `Skipped ${unsupported.length} unsupported id(s) (not Emporia hardware): ${unsupported.join(", ")}. Energy usage is only available for Emporia hardware devices.`,
-                    },
-                ]
-                : [];
+                ? `Skipped ${unsupported.length} unsupported id(s) (not Emporia hardware): ${unsupported.join(", ")}. Energy usage is only available for Emporia hardware devices.`
+                : null;
             if (supported.length === 0) {
-                return {
-                    content: [{ type: "text", text: "No Emporia hardware ids were provided, so there is no energy usage to retrieve." }, ...unsupportedNote],
-                };
+                return buildToolResponse({
+                    summary: "No Emporia hardware ids were provided, so there is no energy usage to retrieve.",
+                    ...(unsupportedNote ? { unsupported_note: unsupportedNote } : {}),
+                });
             }
             const result = await apiService.getDeviceEnergyUsage(extra.authInfo?.token, { ...params, device_ids: supported });
-            // Format the response for each device type
-            const content = Object.entries(result).map(([type, { device_ids, energyData }]) => ({
-                type: "text",
-                text: `Retrieved energy usage data for ${type} device(s): ${device_ids.join(", ")}. ` +
-                    (energyData.success ? `Success count: ${energyData.success.length}` : "") +
-                    (energyData.error && energyData.error.length ? `, Failed: ${energyData.error.length}` : ""),
-            }));
-            return {
-                content: [
-                    ...unsupportedNote,
-                    ...content,
-                    {
-                        type: "text",
-                        text: JSON.stringify(result, null, 2),
-                    },
-                ],
-            };
+            // Summarize the response for each device type
+            const summary = Object.entries(result)
+                .map(([type, { device_ids, energyData }]) => `Retrieved energy usage data for ${type} device(s): ${device_ids.join(", ")}. ` +
+                (energyData.success ? `Success count: ${energyData.success.length}` : "") +
+                (energyData.error && energyData.error.length ? `, Failed: ${energyData.error.length}` : ""))
+                .join(" ");
+            return buildToolResponse({
+                summary,
+                ...(unsupportedNote ? { unsupported_note: unsupportedNote } : {}),
+                result,
+            });
         }
         catch (error) {
             log("Error in getDeviceEnergyUsage tool", { error: String(error) }, "error");
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-                isError: true,
-            };
+            return buildToolErrorResponse(error);
         }
     });
 }
