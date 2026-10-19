@@ -24,6 +24,7 @@ async function main(): Promise<Application> {
       client_id: string;
       code_challenge?: string;
       code_challenge_method?: string;
+      state?: string;
     }
   >();
 
@@ -41,7 +42,7 @@ async function main(): Promise<Application> {
   function createMcpServer(): McpServer {
     const server = new McpServer({
       name: "emporia-mcp",
-      version: "0.2.1",
+      version: "0.2.2",
       capabilities: {
         resources: {},
         tools: {},
@@ -325,7 +326,7 @@ async function main(): Promise<Application> {
   });
 
   app.get("/oauth/authorize", (req: Request, res: Response) => {
-    const { redirect_uri, client_id, code_challenge, code_challenge_method } = req.query as Record<string, string>;
+    const { redirect_uri, client_id, code_challenge, code_challenge_method, state } = req.query as Record<string, string>;
 
     if (!redirect_uri || !client_id) {
       log(`/oauth/authorize: Missing required parameters: redirect_uri=${redirect_uri}; client_id=${client_id}`, null, "error", "EXPRESS");
@@ -341,6 +342,7 @@ async function main(): Promise<Application> {
       client_id,
       code_challenge,
       code_challenge_method,
+      state,
     });
 
     // Build params for Cognito with our callback URI
@@ -380,13 +382,14 @@ async function main(): Promise<Application> {
       const errorParams = new URLSearchParams({
         error,
         ...(error_description && { error_description }),
+        ...(session.state && { state: session.state }),
       });
       return res.redirect(`${session.redirect_uri}?${errorParams.toString()}`);
     }
 
     // Handle successful authorization
     if (code) {
-      const successParams = new URLSearchParams({ code });
+      const successParams = new URLSearchParams({ code, ...(session.state && { state: session.state }) });
       return res.redirect(`${session.redirect_uri}?${successParams.toString()}`);
     }
 
