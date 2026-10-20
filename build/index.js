@@ -45,7 +45,7 @@ async function main() {
      */
     const server = new McpServer({
         name: "emporia-mcp",
-        version: "0.2.1",
+        version: "0.2.2",
         capabilities: {
             resources: {},
             tools: {},

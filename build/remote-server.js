@@ -28,7 +28,7 @@ async function main() {
     function createMcpServer() {
         const server = new McpServer({
             name: "emporia-mcp",
-            version: "0.2.1",
+            version: "0.2.2",
             capabilities: {
                 resources: {},
                 tools: {},
@@ -282,7 +282,7 @@ async function main() {
         });
     });
     app.get("/oauth/authorize", (req, res) => {
-        const { redirect_uri, client_id, code_challenge, code_challenge_method } = req.query;
+        const { redirect_uri, client_id, code_challenge, code_challenge_method, state } = req.query;
         if (!redirect_uri || !client_id) {
             log(`/oauth/authorize: Missing required parameters: redirect_uri=${redirect_uri}; client_id=${client_id}`, null, "error", "EXPRESS");
             return res.status(400).json({ error: "Missing required parameters: redirect_uri and client_id" });
@@ -295,6 +295,7 @@ async function main() {
             client_id,
             code_challenge,
             code_challenge_method,
+            state,
         });
         // Build params for Cognito with our callback URI
         const cognitoParams = new URLSearchParams({
@@ -327,12 +328,13 @@ async function main() {
             const errorParams = new URLSearchParams({
                 error,
                 ...(error_description && { error_description }),
+                ...(session.state && { state: session.state }),
             });
             return res.redirect(`${session.redirect_uri}?${errorParams.toString()}`);
         }
         // Handle successful authorization
         if (code) {
-            const successParams = new URLSearchParams({ code });
+            const successParams = new URLSearchParams({ code, ...(session.state && { state: session.state }) });
             return res.redirect(`${session.redirect_uri}?${successParams.toString()}`);
         }
         // Something went wrong
