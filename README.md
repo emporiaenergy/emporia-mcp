@@ -128,7 +128,13 @@ There is an [NPX bug on Windows](https://www.reddit.com/r/ClaudeAI/comments/1h3k
 ```
 
 #### Option 4: Using Docker
-Build the image from the repository root:
+The image is built on [Docker Hardened Images](https://docs.docker.com/dhi/), which are free but require signing in to their registry once with your Docker Hub account (use a personal access token as the password):
+
+```bash
+docker login dhi.io
+```
+
+Then build the image from the repository root:
 
 ```bash
 docker build -t emporia-mcp .
