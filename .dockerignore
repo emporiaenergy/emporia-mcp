@@ -1,0 +1,11 @@
+node_modules
+build
+logs
+.git
+.env
+.env.*
+!.env.example
+*.log
+.vscode
+.idea
+.DS_Store

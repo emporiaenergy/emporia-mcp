@@ -42,7 +42,7 @@ TODO
 - September 10, 2026 - `listDevices` now uses the site-aware cloud endpoint (devices assigned to a site/Home are no longer missing) and accepts an optional `site_gid` filter; added the `listSites` (Homes) and `getDeviceStatus` tools. Note: "site" (as used by the API and these tools) is the same feature the Emporia app calls a "Home". Also hardened the device tools: `getDeviceDetails`/usage tools now skip and report third-party (thermostat/appliance/vehicle) ids instead of failing the whole batch, `circuit_ids` is optional for non-Vue devices, `getDevicesChannels` flags each channel's `usableAsCircuitId`, `getDeviceStatus` summaries count all device categories, and `listSites` returns member counts by default (pass `include_members` for emails).
 
 ## Prerequisites
-- Node.js 18+ (a Docker-based installation option may be available in the future)
+- Node.js 18+, or Docker (see Option 4 below)
 - An Emporia Energy account (_native_ account, not Google/Apple created)
 - An MCP-capable AI client program (Claude Desktop, Cursor/Windsurf/VS Code, LM Studio/OpenWebUI, etc...)  
   * see [a list of example clients compiled by the official MCP project](https://modelcontextprotocol.io/clients)
@@ -127,6 +127,44 @@ There is an [NPX bug on Windows](https://www.reddit.com/r/ClaudeAI/comments/1h3k
 }
 ```
 
+#### Option 4: Using Docker
+The image is built on [Docker Hardened Images](https://docs.docker.com/dhi/), which are free but require signing in to their registry once with your Docker Hub account (use a personal access token as the password):
+
+```bash
+docker login dhi.io
+```
+
+Then build the image from the repository root:
+
+```bash
+docker build -t emporia-mcp .
+```
+
+Then have your MCP client run the container. The `-i` flag is required so the client can talk to the server over stdin/stdout, and `--rm` cleans up the container when the client disconnects. Passing `-e NAME` without a value forwards that variable from the `env` block into the container.
+
+```json
+{
+  "mcpServers": {
+    "emporia-mcp": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-e", "EMPORIA_ACCOUNT", "-e", "EMPORIA_PASSWORD", "emporia-mcp"],
+      "env": {
+        "EMPORIA_ACCOUNT": "<YOUR_EMAIL>",
+        "EMPORIA_PASSWORD": "<YOUR_PASSWORD>"
+      }
+    }
+  }
+}
+```
+
+To use a `.env` file instead, replace the two `-e` pairs with `"--env-file", "/path/to/your/.env"`. Log files are written to `/app/logs` inside the container; add `"-v", "/path/to/logs:/app/logs"` to keep them on the host.
+
+The same image can also run the remote (SSE / Streamable HTTP) server:
+
+```bash
+docker run --rm -p 50061:50061 -e MCP_SERVER_MODE=remote emporia-mcp node build/remote-server.js
+```
+
 ### Using the Remote MCP
 
 To use the remote MCP server, you must use an MCP client which supports remote MCP over SSE or Streamable HTTP transports, such as Claude via the Anthropic API or Claude Desktop (premium plans only).
@@ -166,7 +204,7 @@ an authentication token retrieved from the OAuth flow in your requests.
 | **Additional Features** | EV Charging Report                  | ✅ Available |
 |  | EV Charger Sessions                 | ✅ Available |
 | **MCP Implementation** | via NPM                             | ✅ Available |
-|  | via Docker                          | 🔄 TBD |
+|  | via Docker                          | ✅ Available |
 |  | Python (UV)                         | ❌ Not Available |
 |  | Tool Configuration (enable/disable) | 🔄 TBD |
 |  | Remote SSE                          | ✅ Available |
